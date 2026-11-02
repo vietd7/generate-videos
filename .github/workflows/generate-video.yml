@@ -1,0 +1,80 @@
+name: Generate Video (cloud render)
+
+# Trigger thủ công — repo public nên Actions minutes không bị giới hạn,
+# nhưng vẫn giữ manual trigger để kiểm soát khi nào chạy.
+on:
+  workflow_dispatch:
+    inputs:
+      affSource:
+        description: "Tên nguồn cần generate (VD: VDStore, PetVibe, ...)"
+        required: true
+        type: string
+      limit:
+        description: "Số row pending_generate tối đa xử lý trong lần chạy này"
+        required: false
+        default: "5"
+        type: string
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Ensure ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+
+      - name: Download audio assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-audios"
+          gh release download ci-audio-assets-v1 \
+            --repo "${{ github.repository }}" \
+            --pattern "ci-audio-assets.zip" \
+            --dir "$RUNNER_TEMP" --clobber
+          unzip -q "$RUNNER_TEMP/ci-audio-assets.zip" -d "$RUNNER_TEMP/ci-audios-extract"
+          mv "$RUNNER_TEMP/ci-audios-extract/audios/"* "$RUNNER_TEMP/ci-audios/"
+
+      - name: Write Google credentials
+        env:
+          GOOGLE_SHEETS_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_SHEETS_CREDENTIALS_JSON" > "$RUNNER_TEMP/credentials.json"
+
+      - name: Generate pending videos
+        env:
+          AFF_AUDIOS_DIR: ${{ runner.temp }}/ci-audios
+          GOOGLE_CREDENTIALS_PATH: ${{ runner.temp }}/credentials.json
+          # Mỗi affSource có 1 secret riêng — script tự chọn đúng biến theo tên
+          # (SPREADSHEET_ID_<AFFSOURCE viết hoa>). Giá trị không bao giờ truyền
+          # qua input/log, chỉ tồn tại trong secret đã mã hoá.
+          SPREADSHEET_ID_VDSTORE: ${{ secrets.SPREADSHEET_ID_VDSTORE }}
+          SPREADSHEET_ID_VDHOME: ${{ secrets.SPREADSHEET_ID_VDHOME }}
+          SPREADSHEET_ID_AT: ${{ secrets.SPREADSHEET_ID_AT }}
+          SPREADSHEET_ID_PETVIBE: ${{ secrets.SPREADSHEET_ID_PETVIBE }}
+          SPREADSHEET_ID_BEDAILY: ${{ secrets.SPREADSHEET_ID_BEDAILY }}
+          SPREADSHEET_ID_APEXMEN: ${{ secrets.SPREADSHEET_ID_APEXMEN }}
+          SPREADSHEET_ID_TECHVIBE: ${{ secrets.SPREADSHEET_ID_TECHVIBE }}
+        run: node scripts/generate-pending-videos.mjs --affSource "${{ inputs.affSource }}" --limit "${{ inputs.limit }}"
+
+      - name: Upload rendered videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-videos-${{ inputs.affSource }}-${{ github.run_id }}
+          path: ci-output/*.mp4
+          retention-days: 14
+          if-no-files-found: warn
