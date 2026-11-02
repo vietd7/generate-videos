@@ -67,9 +67,11 @@ async function findPendingRows(spreadsheetId, sheetHint, limit) {
 }
 
 async function main() {
-  const { affSource, limit } = parseArgs(process.argv.slice(2));
+  const { affSource, limit: rawLimit } = parseArgs(process.argv.slice(2));
   if (!affSource) throw new Error("missing --affSource");
-  if (!Number.isInteger(limit) || limit < 1) throw new Error(`invalid --limit: ${limit}`);
+  if (!Number.isInteger(rawLimit) || rawLimit < 0) throw new Error(`invalid --limit: ${rawLimit}`);
+  // 0 = không giới hạn, xử lý hết toàn bộ row pending_generate trong sheet.
+  const limit = rawLimit === 0 ? Infinity : rawLimit;
 
   const spreadsheetId = resolveSpreadsheetId(affSource);
   const sheetHint = { sheetTitle: DEFAULT_SHEET_TITLE, sheetIndex: null };
